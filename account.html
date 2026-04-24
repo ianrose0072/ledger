@@ -991,7 +991,7 @@ async function deleteCategory(id) {
 
 async function confirmDeleteAccount() {
   if(!confirm('This will permanently delete your account and all data. This cannot be undone. Continue?')) return;
-  const { error } = await sb.rpc('delete_user_data');
+  const { error } = await sb.rpc('delete_user_account');
   if(error){ toast('Could not delete account — contact support.','error'); return; }
   await sb.auth.signOut();
   location.href='index.html';
