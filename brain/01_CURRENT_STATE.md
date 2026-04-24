@@ -33,19 +33,25 @@
 - `build.sh` — generates `config.js` from `.env`
 - `config.template.js` — committed placeholder
 - `_headers` — Cloudflare Pages security headers (CSP, X-Frame-Options, etc.)
-- `.gitignore` — `.env` and `config.js` excluded
-- Pre-commit hook — scans for leaked secrets
+- `.gitignore` — `.env` excluded; `config.js` is committed (publishable key only — safe)
+- Pre-commit hook — blocks JWT tokens, Stripe live keys, GitHub tokens
+- **GitHub Pages live** at https://ianrose0072.github.io/ledger
 
 ---
 
 ## What's NOT done / known gaps ⚠️
-- No Cloudflare Pages project created yet — deploy manually or push to GitHub then connect
+- **Supabase auth URLs need 2 manual changes in dashboard** (see below)
 - Google OAuth requires manual setup: Google Cloud Console → OAuth credentials → add Supabase callback URL → enable Google provider in Supabase Auth settings
-- No domain configured — SITE_URL in .env needs updating when domain is known
 - No Resend SMTP configured — auth emails use Supabase default sender for now
 - No admin panel
 - No CSV export of transactions
 - No recurring transactions feature
+
+## Supabase dashboard — 2 manual steps required
+Go to https://supabase.com/dashboard/project/flysstpeccyfyrnjrjdb/auth/url-configuration
+1. **Site URL** → set to `https://ianrose0072.github.io/ledger`
+2. **Redirect URLs** → add `https://ianrose0072.github.io/ledger/**`
+Without these, email verification links won't redirect back to the app correctly.
 
 ---
 
@@ -53,6 +59,7 @@
 | File | What it did |
 |------|------------|
 | `20260424000001_initial_schema.sql` | Full schema: profiles, categories (with 18 defaults), transactions, budget_targets, savings_goals; all RLS policies; performance indexes; handle_new_user trigger |
+| `20260424000002_delete_user_account_function.sql` | `delete_user_account()` SECURITY DEFINER function — deletes profile + auth user; granted to authenticated only |
 
 ---
 
