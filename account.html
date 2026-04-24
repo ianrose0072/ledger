@@ -6,9 +6,9 @@
 <title>Dashboard — Ledger</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
-<script src="config.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="config.js"></script>
 <style>
 :root{
   --navy:#050d1a;--deep:#0a1628;--card:#0f1e35;--border:rgba(16,185,129,.13);
@@ -389,8 +389,19 @@ header{
 <div class="toast" id="toast"></div>
 
 <script>
-const { createClient } = window.supabase;
-const sb = createClient(window.LDG.SUPABASE_URL, window.LDG.SUPABASE_KEY);
+// ── Defensive client init ─────────────────────────────────────────
+let sb;
+try {
+  if (typeof window.supabase === 'undefined') throw new Error('Supabase library not loaded');
+  if (typeof window.LDG === 'undefined')      throw new Error('config.js not loaded');
+  sb = window.supabase.createClient(window.LDG.SUPABASE_URL, window.LDG.SUPABASE_KEY);
+} catch (err) {
+  document.getElementById('loader').innerHTML =
+    `<div class="logo">Ledger</div><p style="color:#fca5a5;font-size:.9rem;max-width:320px;text-align:center">
+    Failed to initialise: ${err.message}<br><br>
+    <a href="login.html" style="color:#10b981">← Back to sign in</a></p>`;
+  throw err;
+}
 
 const state = {
   user: null, profile: null,
@@ -403,18 +414,27 @@ const state = {
 
 // ── INIT ──────────────────────────────────────────────────────────
 async function init() {
-  const { data: { session } } = await sb.auth.getSession();
-  if (!session) { location.href = 'login.html'; return; }
-  state.user = session.user;
-  sb.auth.onAuthStateChange((_, s) => { if (!s) location.href = 'login.html'; });
-  state.budgetMonth = getCurrentMonth();
-  await loadAll();
-  document.getElementById('header-name').textContent = state.profile?.full_name || state.user.email;
-  document.getElementById('loader').style.display = 'none';
-  document.getElementById('site-header').style.display = '';
-  document.getElementById('tab-bar').style.display = '';
-  document.getElementById('main-content').style.display = '';
-  renderTab('dashboard');
+  try {
+    const { data: { session }, error: sessionErr } = await sb.auth.getSession();
+    if (sessionErr) throw sessionErr;
+    if (!session) { location.href = 'login.html'; return; }
+    state.user = session.user;
+    sb.auth.onAuthStateChange((_, s) => { if (!s) location.href = 'login.html'; });
+    state.budgetMonth = getCurrentMonth();
+    await loadAll();
+    document.getElementById('header-name').textContent = state.profile?.full_name || state.user.email;
+    document.getElementById('loader').style.display = 'none';
+    document.getElementById('site-header').style.display = '';
+    document.getElementById('tab-bar').style.display = '';
+    document.getElementById('main-content').style.display = '';
+    renderTab('dashboard');
+  } catch (err) {
+    document.getElementById('loader').innerHTML =
+      `<div class="logo">Ledger</div><p style="color:#fca5a5;font-size:.9rem;max-width:320px;text-align:center">
+      Error loading app: ${err.message}<br><br>
+      <a href="login.html" style="color:#10b981">← Back to sign in</a></p>`;
+    console.error('Init error:', err);
+  }
 }
 
 async function loadAll() {
@@ -422,15 +442,31 @@ async function loadAll() {
   const [p, c, t, b, g] = await Promise.all([
     sb.from('profiles').select('*').eq('id', uid).single(),
     sb.from('categories').select('*').order('type').order('name'),
-    sb.from('transactions').select('*, category:categories(id,name,color,type)').eq('user_id', uid).order('date', {ascending:false}).order('created_at', {ascending:false}),
-    sb.from('budget_targets').select('*, category:categories(id,name,color)').eq('user_id', uid),
-    sb.from('savings_goals').select('*').eq('user_id', uid).order('created_at')
+    sb.from('transactions')
+      .select('*, category:categories(id,name,color,type)')
+      .eq('user_id', uid)
+      .order('date', {ascending:false})
+      .order('created_at', {ascending:false}),
+    sb.from('budget_targets')
+      .select('*, category:categories(id,name,color)')
+      .eq('user_id', uid),
+    sb.from('savings_goals')
+      .select('*')
+      .eq('user_id', uid)
+      .order('created_at')
   ]);
+
+  if (p.error && p.error.code !== 'PGRST116') console.error('Profile load error:', p.error);
+  if (c.error) console.error('Categories load error:', c.error);
+  if (t.error) console.error('Transactions load error:', t.error);
+  if (b.error) console.error('Budgets load error:', b.error);
+  if (g.error) console.error('Goals load error:', g.error);
+
   if (p.data) state.profile = p.data;
-  state.categories  = c.data || [];
+  state.categories   = c.data || [];
   state.transactions = t.data || [];
-  state.budgets     = b.data || [];
-  state.goals       = g.data || [];
+  state.budgets      = b.data || [];
+  state.goals        = g.data || [];
 }
 
 // ── UTILS ─────────────────────────────────────────────────────────
