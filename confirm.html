@@ -6,8 +6,6 @@
 <title>Verifying — Ledger</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
-<script src="config.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root{--navy:#050d1a;--deep:#0a1628;--border:rgba(16,185,129,.15);--electric:#10b981;--white:#f4f7ff;--off:#a8b8d0;--muted:#6b7a93;--danger:#ef4444}
   *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -52,62 +50,104 @@
   </div>
 </div>
 
+<!-- Supabase FIRST, then config -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
 <script>
-const supabase = window.supabase.createClient(window.LDG.SUPABASE_URL, window.LDG.SUPABASE_KEY);
+(function () {
+  'use strict';
 
-async function verify() {
-  const params = new URLSearchParams(window.location.hash.substring(1));
-  const qParams = new URLSearchParams(window.location.search);
-
-  const tokenHash = qParams.get('token_hash');
-  const type      = qParams.get('type') || 'email';
-  const code      = qParams.get('code') || params.get('code');
-  const accessToken  = params.get('access_token');
-  const refreshToken = params.get('refresh_token');
-
+  // ── Init ────────────────────────────────────────────────────────
+  let sb;
   try {
-    if (tokenHash) {
-      const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type });
-      if (error) throw error;
-    } else if (code) {
-      const { error } = await supabase.auth.exchangeCodeForSession(code);
-      if (error) throw error;
-    } else if (accessToken) {
-      const { error } = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
-      if (error) throw error;
-    } else {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error('No verification token found. Try signing in again.');
-    }
-    showSuccess();
+    if (typeof window.supabase === 'undefined') throw new Error('Supabase library failed to load.');
+    if (typeof window.LDG === 'undefined')      throw new Error('config.js failed to load.');
+    sb = window.supabase.createClient(window.LDG.SUPABASE_URL, window.LDG.SUPABASE_KEY);
   } catch (err) {
-    showError(err.message || 'Verification failed.');
+    showError(err.message);
+    return;
   }
-}
 
-function showSuccess() {
-  document.getElementById('icon').className = 'icon success';
-  document.getElementById('icon').innerHTML = '<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>';
-  document.getElementById('title').textContent = 'Email verified';
-  document.getElementById('body').textContent = 'Your account is confirmed. Taking you to your dashboard.';
-  document.getElementById('countdownEl').style.display = 'block';
-  let count = 3;
-  const timer = setInterval(() => {
-    count--;
-    document.getElementById('num').textContent = count;
-    if (count <= 0) { clearInterval(timer); window.location.href = 'account.html'; }
-  }, 1000);
-}
+  const qParams    = new URLSearchParams(window.location.search);
+  const tokenHash  = qParams.get('token_hash');
+  const type       = qParams.get('type') || 'email';
+  const code       = qParams.get('code');
 
-function showError(msg) {
-  document.getElementById('icon').className = 'icon error';
-  document.getElementById('icon').innerHTML = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
-  document.getElementById('title').textContent = 'Verification failed';
-  document.getElementById('body').textContent = msg;
-  document.getElementById('actions').innerHTML = '<a href="login.html" class="btn">Back to sign in</a>';
-}
+  // ── Resolve once ─────────────────────────────────────────────────
+  let resolved = false;
+  let timeoutId;
 
-verify();
+  function resolve(ok, msg) {
+    if (resolved) return;
+    resolved = true;
+    clearTimeout(timeoutId);
+    if (ok) showSuccess();
+    else     showError(msg || 'Verification failed. Try signing in again.');
+  }
+
+  // Bail out after 15 s if nothing fires
+  timeoutId = setTimeout(() => resolve(false, 'Verification timed out. Try signing in again.'), 15000);
+
+  // ── Auth state listener ──────────────────────────────────────────
+  // For Google OAuth (PKCE): Supabase auto-exchanges the ?code= on page load
+  // and fires SIGNED_IN here — we must NOT call exchangeCodeForSession ourselves.
+  sb.auth.onAuthStateChange((event, session) => {
+    if ((event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session) {
+      resolve(true);
+    }
+  });
+
+  // ── Main flow ────────────────────────────────────────────────────
+  async function run() {
+    // Already signed in (e.g. page refresh after verification)
+    try {
+      const { data: { session } } = await sb.auth.getSession();
+      if (session) { resolve(true); return; }
+    } catch (_) {}
+
+    if (tokenHash) {
+      // Email link verification — call verifyOtp explicitly
+      try {
+        const { error } = await sb.auth.verifyOtp({ token_hash: tokenHash, type });
+        if (error) throw error;
+        resolve(true);
+      } catch (err) {
+        resolve(false, err.message || 'Email verification failed.');
+      }
+    } else if (code) {
+      // Google / OAuth PKCE — Supabase handles exchange automatically.
+      // onAuthStateChange fires SIGNED_IN when done; timeout handles failure.
+    } else {
+      resolve(false, 'No verification token found. Try signing in again.');
+    }
+  }
+
+  run();
+
+  // ── UI helpers ───────────────────────────────────────────────────
+  function showSuccess() {
+    document.getElementById('icon').className = 'icon success';
+    document.getElementById('icon').innerHTML = '<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>';
+    document.getElementById('title').textContent = 'All set!';
+    document.getElementById('body').textContent  = 'Your account is confirmed. Taking you to your dashboard.';
+    document.getElementById('countdownEl').style.display = 'block';
+    let count = 3;
+    const timer = setInterval(() => {
+      count--;
+      document.getElementById('num').textContent = count;
+      if (count <= 0) { clearInterval(timer); window.location.href = 'account.html'; }
+    }, 1000);
+  }
+
+  function showError(msg) {
+    document.getElementById('icon').className = 'icon error';
+    document.getElementById('icon').innerHTML = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
+    document.getElementById('title').textContent = 'Verification failed';
+    document.getElementById('body').textContent  = msg;
+    document.getElementById('actions').innerHTML = '<a href="login.html" class="btn">Back to sign in</a>';
+  }
+
+})();
 </script>
 </body>
 </html>
