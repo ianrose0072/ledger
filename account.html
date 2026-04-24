@@ -423,7 +423,7 @@ try {
 
 const state = {
   user: null, profile: null,
-  categories: [], transactions: [], budgets: [], goals: [],
+  categories: [], transactions: [], budgets: [], goals: [], recurring: [],
   activeTab: 'dashboard',
   budgetMonth: null,
   analyticsPeriod: '3m',
@@ -440,6 +440,7 @@ async function init() {
     sb.auth.onAuthStateChange((_, s) => { if (!s) location.href = 'login.html'; });
     state.budgetMonth = getCurrentMonth();
     await loadAll();
+    await processRecurring();
     document.getElementById('header-name').textContent = state.profile?.full_name || state.user.email;
     document.getElementById('loader').style.display = 'none';
     document.getElementById('site-header').style.display = '';
@@ -457,7 +458,7 @@ async function init() {
 
 async function loadAll() {
   const uid = state.user.id;
-  const [p, c, t, b, g] = await Promise.all([
+  const [p, c, t, b, g, r] = await Promise.all([
     sb.from('profiles').select('*').eq('id', uid).single(),
     sb.from('categories').select('*').order('type').order('name'),
     sb.from('transactions')
@@ -471,7 +472,11 @@ async function loadAll() {
     sb.from('savings_goals')
       .select('*')
       .eq('user_id', uid)
-      .order('created_at')
+      .order('created_at'),
+    sb.from('recurring_transactions')
+      .select('*, category:categories(id,name,color,type)')
+      .eq('user_id', uid)
+      .order('next_date')
   ]);
 
   if (p.error && p.error.code !== 'PGRST116') console.error('Profile load error:', p.error);
@@ -479,12 +484,41 @@ async function loadAll() {
   if (t.error) console.error('Transactions load error:', t.error);
   if (b.error) console.error('Budgets load error:', b.error);
   if (g.error) console.error('Goals load error:', g.error);
+  if (r.error) console.error('Recurring load error:', r.error);
 
   if (p.data) state.profile = p.data;
   state.categories   = c.data || [];
   state.transactions = t.data || [];
   state.budgets      = b.data || [];
   state.goals        = g.data || [];
+  state.recurring    = r.data || [];
+}
+
+// ── RECURRING: auto-create due transactions on load ───────────────
+async function processRecurring() {
+  const today = new Date().toISOString().slice(0,10);
+  const due = state.recurring.filter(r => r.active && r.next_date <= today);
+  if (!due.length) return;
+  for (const r of due) {
+    await sb.from('transactions').insert({
+      user_id: state.user.id, type: r.type, amount: r.amount,
+      category_id: r.category_id, description: r.description,
+      date: r.next_date, notes: r.notes
+    });
+    await sb.from('recurring_transactions')
+      .update({ next_date: calcNextDate(r.next_date, r.frequency), updated_at: new Date().toISOString() })
+      .eq('id', r.id);
+  }
+  await loadAll();
+  toast(`${due.length} recurring transaction${due.length > 1 ? 's' : ''} added automatically.`, 'success');
+}
+
+function calcNextDate(dateStr, freq) {
+  const d = new Date(dateStr + 'T00:00:00');
+  if (freq === 'weekly')  d.setDate(d.getDate() + 7);
+  if (freq === 'monthly') d.setMonth(d.getMonth() + 1);
+  if (freq === 'yearly')  d.setFullYear(d.getFullYear() + 1);
+  return d.toISOString().slice(0,10);
 }
 
 // ── UTILS ─────────────────────────────────────────────────────────
@@ -713,12 +747,21 @@ function renderTransactions() {
       <input type="search" id="f-search" placeholder="Search..." oninput="applyTxFilter()">
     </div>
     <div id="tx-body"></div>
+
+    <div style="margin-top:2rem;border-top:1px solid var(--border);padding-top:1.5rem">
+      <div class="section-header" style="margin-bottom:1rem">
+        <h3 style="font-family:'Bebas Neue',sans-serif;letter-spacing:.07em;font-size:1.2rem">Recurring</h3>
+        <button class="btn-ghost" onclick="openRecurringModal(null)">+ Add recurring</button>
+      </div>
+      <div id="recurring-body"></div>
+    </div>
   `;
 
   document.getElementById('f-type').value = txFilter.type;
   if(txFilter.category!=='all') document.getElementById('f-cat').value = txFilter.category;
   document.getElementById('f-search').value = txFilter.search;
   renderTxList();
+  renderRecurringList();
 }
 
 function applyTxFilter() {
@@ -1118,18 +1161,21 @@ function closeModalIfOutside(e) { if(e.target===document.getElementById('modal-o
 // Transaction modal
 function openTxModal(txId) {
   const tx = txId ? state.transactions.find(t=>t.id===txId) : null;
-  const expCats = state.categories.filter(c=>c.type==='expense'||c.type==='both');
-  const incCats = state.categories.filter(c=>c.type==='income'||c.type==='both');
-  const today = new Date().toISOString().slice(0,10);
+  const today     = new Date().toISOString().slice(0,10);
   const yesterday = new Date(Date.now()-86400000).toISOString().slice(0,10);
-  const curType = tx?.type||'expense';
+  const curType   = tx?.type || 'expense';
 
-  const catOptions = (cats, selId) => cats.map(c=>`<option value="${c.id}" ${selId===c.id?'selected':''}>${esc(c.name)}</option>`).join('');
+  function catOpts(type, selId) {
+    return state.categories
+      .filter(c => c.type === type || c.type === 'both')
+      .map(c => `<option value="${c.id}" ${selId===c.id?'selected':''}>${esc(c.name)}</option>`)
+      .join('');
+  }
 
-  openModal(tx?'Edit transaction':'Add transaction',`
+  openModal(tx ? 'Edit transaction' : 'Add transaction', `
     <div class="type-toggle">
       <input type="radio" name="tx-type" id="tx-type-exp" value="expense" ${curType==='expense'?'checked':''}><label for="tx-type-exp" class="expense-lbl">Expense</label>
-      <input type="radio" name="tx-type" id="tx-type-inc" value="income" ${curType==='income'?'checked':''}><label for="tx-type-inc" class="income-lbl">Income</label>
+      <input type="radio" name="tx-type" id="tx-type-inc" value="income"  ${curType==='income' ?'checked':''}><label for="tx-type-inc" class="income-lbl">Income</label>
     </div>
     <div class="form-group">
       <label>Amount</label>
@@ -1139,8 +1185,7 @@ function openTxModal(txId) {
       <label>Category</label>
       <select id="m-cat">
         <option value="">-- Select category --</option>
-        <optgroup label="Expense categories" id="m-cat-exp">${catOptions(expCats, tx?.category_id)}</optgroup>
-        <optgroup label="Income categories" id="m-cat-inc">${catOptions(incCats, tx?.category_id)}</optgroup>
+        ${catOpts(curType, tx?.category_id)}
       </select>
     </div>
     <div class="form-group">
@@ -1165,16 +1210,12 @@ function openTxModal(txId) {
     </div>
   `);
 
-  // Show/hide category groups based on type
-  function updateCatGroups() {
-    const type = document.querySelector('input[name="tx-type"]:checked')?.value||'expense';
-    document.getElementById('m-cat-exp').style.display = type==='expense'?'':'none';
-    document.getElementById('m-cat-inc').style.display = type==='income'?'':'none';
-    if(type==='expense' && document.getElementById('m-cat-inc').querySelector(`option[value="${document.getElementById('m-cat').value}"]`)){document.getElementById('m-cat').value='';}
-    if(type==='income' && document.getElementById('m-cat-exp').querySelector(`option[value="${document.getElementById('m-cat').value}"]`)){document.getElementById('m-cat').value='';}
-  }
-  updateCatGroups();
-  document.querySelectorAll('input[name="tx-type"]').forEach(r=>r.addEventListener('change',updateCatGroups));
+  // Rebuild category options when type changes
+  document.querySelectorAll('input[name="tx-type"]').forEach(r => r.addEventListener('change', () => {
+    const type = document.querySelector('input[name="tx-type"]:checked').value;
+    const sel = document.getElementById('m-cat');
+    sel.innerHTML = '<option value="">-- Select category --</option>' + catOpts(type, '');
+  }));
 }
 
 async function saveTx(txId) {
@@ -1398,6 +1439,147 @@ async function saveCategory() {
   closeModal();
   renderSettings();
   toast('Category added.','success');
+}
+
+// ── RECURRING UI ─────────────────────────────────────────────────
+function renderRecurringList() {
+  const el = document.getElementById('recurring-body');
+  if (!el) return;
+  if (!state.recurring.length) {
+    el.innerHTML = '<div class="empty" style="padding:1.25rem 0"><h3>No recurring transactions</h3><p>Add salary, rent, subscriptions — anything that repeats.</p></div>';
+    return;
+  }
+  const freqLabel = { weekly:'Weekly', monthly:'Monthly', yearly:'Yearly' };
+  el.innerHTML = '<div class="tx-list">' + state.recurring.map(r => `
+    <div class="tx-row" style="${!r.active?'opacity:.5':''}">
+      <div class="tx-dot" style="background:${esc(r.category?.color||'#6b7280')}"></div>
+      <div class="tx-info">
+        <div class="tx-desc">${esc(r.description)} <span style="font-size:.72rem;padding:.1rem .45rem;border-radius:4px;background:rgba(255,255,255,.07);color:var(--muted)">${freqLabel[r.frequency]}</span>${!r.active?' <span style="font-size:.72rem;color:var(--warning)">Paused</span>':''}</div>
+        <div class="tx-meta">${esc(r.category?.name||'Uncategorized')} · Next: ${fmtDate(r.next_date)}</div>
+      </div>
+      <div class="tx-amount ${r.type}">${r.type==='income'?'+':'-'}${fmt(r.amount)}</div>
+      <div class="tx-actions">
+        <button class="icon-btn" title="${r.active?'Pause':'Resume'}" onclick="toggleRecurring('${r.id}',${r.active})">${r.active?'⏸':'▶'}</button>
+        <button class="icon-btn" title="Edit" onclick="openRecurringModal('${r.id}')">✎</button>
+        <button class="icon-btn del" title="Delete" onclick="deleteRecurring('${r.id}')">✕</button>
+      </div>
+    </div>`).join('') + '</div>';
+}
+
+function openRecurringModal(recId) {
+  const rec = recId ? state.recurring.find(r=>r.id===recId) : null;
+  const today = new Date().toISOString().slice(0,10);
+  const curType = rec?.type || 'income';
+
+  function catOpts(type, selId) {
+    return state.categories
+      .filter(c => c.type === type || c.type === 'both')
+      .map(c => `<option value="${c.id}" ${selId===c.id?'selected':''}>${esc(c.name)}</option>`)
+      .join('');
+  }
+
+  openModal(rec ? 'Edit recurring transaction' : 'Add recurring transaction', `
+    <div class="type-toggle">
+      <input type="radio" name="rec-type" id="rec-type-inc" value="income"  ${curType==='income' ?'checked':''}><label for="rec-type-inc" class="income-lbl">Income</label>
+      <input type="radio" name="rec-type" id="rec-type-exp" value="expense" ${curType==='expense'?'checked':''}><label for="rec-type-exp" class="expense-lbl">Expense</label>
+    </div>
+    <div class="form-group">
+      <label>Amount</label>
+      <input type="number" id="r-amount" placeholder="0.00" step="0.01" min="0.01" value="${rec?rec.amount:''}">
+    </div>
+    <div class="form-group">
+      <label>Category</label>
+      <select id="r-cat">
+        <option value="">-- Select category --</option>
+        ${catOpts(curType, rec?.category_id)}
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Description</label>
+      <input type="text" id="r-desc" placeholder="Salary, Rent, Netflix..." value="${esc(rec?.description||'')}">
+    </div>
+    <div class="form-group">
+      <label>Frequency</label>
+      <select id="r-freq">
+        <option value="weekly"  ${rec?.frequency==='weekly' ?'selected':''}>Weekly</option>
+        <option value="monthly" ${(!rec||rec?.frequency==='monthly')?'selected':''}>Monthly</option>
+        <option value="yearly"  ${rec?.frequency==='yearly' ?'selected':''}>Yearly</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>${rec ? 'Next date' : 'Start date'}</label>
+      <input type="date" id="r-date" value="${rec?.next_date||today}">
+      <div class="date-quick">
+        <button type="button" class="date-quick-btn" onclick="document.getElementById('r-date').value='${today}'">Today</button>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Notes (optional)</label>
+      <input type="text" id="r-notes" placeholder="Any extra details" value="${esc(rec?.notes||'')}">
+    </div>
+    <div style="display:flex;gap:.75rem;justify-content:flex-end">
+      <button class="btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn" onclick="saveRecurring('${recId||''}')">Save</button>
+    </div>
+  `);
+
+  document.querySelectorAll('input[name="rec-type"]').forEach(r => r.addEventListener('change', () => {
+    const type = document.querySelector('input[name="rec-type"]:checked').value;
+    const sel = document.getElementById('r-cat');
+    sel.innerHTML = '<option value="">-- Select category --</option>' + catOpts(type, '');
+  }));
+}
+
+async function saveRecurring(recId) {
+  const type        = document.querySelector('input[name="rec-type"]:checked')?.value;
+  const amount      = parseFloat(document.getElementById('r-amount').value);
+  const category_id = document.getElementById('r-cat').value || null;
+  const description = document.getElementById('r-desc').value.trim();
+  const frequency   = document.getElementById('r-freq').value;
+  const next_date   = document.getElementById('r-date').value;
+  const notes       = document.getElementById('r-notes').value.trim() || null;
+
+  if (!amount || amount <= 0) { toast('Enter a valid amount.', 'error'); return; }
+  if (!description)           { toast('Enter a description.', 'error'); return; }
+  if (!next_date)             { toast('Select a start date.', 'error'); return; }
+
+  const btn = document.querySelector('#modal-body .btn:last-child');
+  btn.disabled = true;
+
+  if (recId) {
+    const { error } = await sb.from('recurring_transactions')
+      .update({ type, amount, category_id, description, frequency, next_date, notes, updated_at: new Date().toISOString() })
+      .eq('id', recId);
+    if (error) { toast('Failed to save.', 'error'); btn.disabled = false; return; }
+  } else {
+    const { error } = await sb.from('recurring_transactions')
+      .insert({ user_id: state.user.id, type, amount, category_id, description, frequency, next_date, notes });
+    if (error) { toast('Failed to save.', 'error'); btn.disabled = false; return; }
+  }
+
+  closeModal();
+  await loadAll();
+  renderTransactions();
+  toast(`Recurring transaction ${recId ? 'updated' : 'added'}.`, 'success');
+}
+
+async function deleteRecurring(id) {
+  if (!confirm('Delete this recurring transaction? Past transactions it created will remain.')) return;
+  const { error } = await sb.from('recurring_transactions').delete().eq('id', id);
+  if (error) { toast('Failed to delete.', 'error'); return; }
+  await loadAll();
+  renderTransactions();
+  toast('Recurring transaction deleted.', 'success');
+}
+
+async function toggleRecurring(id, currentlyActive) {
+  const { error } = await sb.from('recurring_transactions')
+    .update({ active: !currentlyActive, updated_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) { toast('Failed to update.', 'error'); return; }
+  await loadAll();
+  renderRecurringList();
+  toast(currentlyActive ? 'Recurring paused.' : 'Recurring resumed.', 'success');
 }
 
 // Starting balance modal
