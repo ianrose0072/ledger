@@ -5,7 +5,7 @@
 - **Product:** Ledger
 - **Purpose:** Personal budget tracker — log income and expenses, set category budgets, visualise spending, and see exactly how much is left to spend
 - **Live URL:** TBD (Cloudflare Pages)
-- **Repo:** TBD (GitHub private)
+- **Repo:** https://github.com/ianrose0072/ledger (private)
 - **Supabase project:** https://flysstpeccyfyrnjrjdb.supabase.co
 - **Status:** In development (started 2026-04-24)
 
