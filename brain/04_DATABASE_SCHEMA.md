@@ -67,6 +67,19 @@ created_at     timestamptz not null default now()
 updated_at     timestamptz not null default now()
 ```
 
+### recurring_budget_templates
+```sql
+id          uuid        PK default gen_random_uuid()
+user_id     uuid        NOT NULL → profiles(id) ON DELETE CASCADE
+category_id uuid        → categories(id) ON DELETE CASCADE
+amount      numeric(12,2) NOT NULL  -- monthly amount to auto-apply
+active      boolean     NOT NULL default true
+created_at  timestamptz NOT NULL default now()
+updated_at  timestamptz NOT NULL default now()
+UNIQUE(user_id, category_id)
+```
+Auto-applied on page load: for the current month, any active template whose category has no `budget_targets` row gets one inserted.
+
 ### recurring_transactions
 ```sql
 id           uuid        PK default gen_random_uuid()
@@ -96,6 +109,7 @@ Auto-processed on page load: any active template with `next_date <= today` creat
 | budget_targets | own rows | own user_id | own rows | own rows |
 | savings_goals | own rows | own user_id | own rows | own rows |
 | recurring_transactions | own rows | own user_id | own rows | own rows |
+| recurring_budget_templates | own rows | own user_id | own rows | own rows |
 
 ---
 
@@ -107,6 +121,7 @@ Auto-processed on page load: any active template with `next_date <= today` creat
 - `idx_savings_goals_user_id` on `savings_goals(user_id)`
 - `idx_categories_user_id` on `categories(user_id)`
 - `idx_recurring_user_active` on `recurring_transactions(user_id, active, next_date)`
+- `idx_recurring_budgets_user` on `recurring_budget_templates(user_id, active)`
 
 ---
 
@@ -123,6 +138,7 @@ Migrations applied (in order):
 2. `20260424000002_delete_user_account_function.sql` — `delete_user_account()` RPC
 3. MCP: `add_bank_balance_to_profiles` — adds `bank_balance` column to profiles
 4. MCP: `add_recurring_transactions` — `recurring_transactions` table + RLS + index
+5. MCP: `add_recurring_budget_templates` — `recurring_budget_templates` table + RLS + index
 
 ---
 

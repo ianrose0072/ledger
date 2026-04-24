@@ -1,7 +1,7 @@
 # Ledger — Current State
 > Update this file at the END of every session. Paste alongside 00_PROJECT_BRIEF.md at session start.
 
-## Last updated: 2026-04-24 (session 2)
+## Last updated: 2026-04-24 (session 3)
 
 ---
 
@@ -16,7 +16,7 @@
 ### account.html features
 - **Dashboard tab**: account balance (starting balance + all-time transactions), monthly income/expenses, savings rate, spendable-this-month bar, income-vs-expenses bar chart, category donut chart, recent transactions
 - **Transactions tab**: full CRUD, filter by type/category/month, search, running totals; current account balance banner with "Edit starting balance" button; **Recurring section** — list, add, edit, delete, pause/resume recurring transactions
-- **Budgets tab**: set monthly budget per category, progress bars, total spendable remaining
+- **Budgets tab**: set monthly budget per category, progress bars, total spendable remaining; **Recurring budgets** — check "Repeat every month" on any budget to auto-apply it every month; pause/resume/delete templates; auto-processed on page load
 - **Analytics tab**: period selector (1/3/6/12m), income vs expenses bar chart, category breakdown donut (with empty state), daily spending line chart; refreshes from Supabase on every tab switch
 - **Goals tab**: savings goals CRUD, progress bars, add-funds modal, target dates
 - **Settings tab**: edit name/currency, manage custom categories, sign out, delete account
@@ -35,7 +35,8 @@
 - `budget_targets` — monthly budget amounts per category
 - `savings_goals` — savings goals with progress tracking
 - `recurring_transactions` — recurring income/expense templates; auto-processed on page load
-- RLS enabled on all 6 tables
+- `recurring_budget_templates` — recurring monthly budget amounts per category; auto-applied on page load
+- RLS enabled on all 7 tables
 
 ### Infrastructure
 - `config.js` — committed (publishable key only — safe); `window.LDG` namespace
@@ -43,6 +44,13 @@
 - **GitHub Pages live** at https://ianrose0072.github.io/ledger (public repo required for free Pages)
 
 ---
+
+## Recurring budgets — how it works
+1. When saving a budget, check "Repeat every month automatically" → saves a template to `recurring_budget_templates`
+2. On every page load, `processRecurringBudgets()` checks: for the current month, which template categories have no `budget_targets` row yet?
+3. Auto-inserts missing budget rows from the template amounts
+4. Templates can be paused/resumed/deleted; existing monthly budgets are unaffected by deletion
+5. Editing a monthly budget and unchecking "Repeat" removes the template
 
 ## Recurring transactions — how it works
 1. User adds a recurring template (income or expense) with frequency: weekly / monthly / yearly
@@ -66,6 +74,7 @@
 | `20260424000002_delete_user_account_function.sql` | `delete_user_account()` SECURITY DEFINER function |
 | (via MCP) `add_bank_balance_to_profiles` | `ALTER TABLE profiles ADD COLUMN bank_balance numeric(12,2) DEFAULT 0` |
 | (via MCP) `add_recurring_transactions` | `recurring_transactions` table + RLS + index |
+| (via MCP) `add_recurring_budget_templates` | `recurring_budget_templates` table + RLS + index |
 
 ---
 
