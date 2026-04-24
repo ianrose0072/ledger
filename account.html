@@ -191,6 +191,24 @@ header{
 .tx-totals .income-tot{color:var(--income)}
 .tx-totals .expense-tot{color:var(--expense)}
 
+/* BALANCE BANNER */
+.balance-banner{
+  background:var(--deep);border:1px solid var(--border);border-radius:12px;
+  padding:1.25rem 1.5rem;margin-bottom:1.25rem;
+  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.75rem;
+  position:relative;overflow:hidden;
+}
+.balance-banner::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--electric),transparent)}
+.balance-label{font-size:.72rem;font-family:'Space Mono',monospace;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:.35rem}
+.balance-amount{font-family:'Space Mono',monospace;font-size:1.8rem;font-weight:700;color:var(--electric)}
+.balance-amount.negative{color:var(--danger)}
+.balance-meta{font-size:.78rem;color:var(--muted);margin-top:.3rem}
+
+/* DATE QUICK BTNS */
+.date-quick{display:flex;gap:.4rem;margin-top:.4rem}
+.date-quick-btn{background:none;border:1px solid var(--border);border-radius:5px;color:var(--muted);font-size:.75rem;font-family:'DM Sans',sans-serif;padding:.2rem .55rem;cursor:pointer;transition:border-color .2s,color .2s}
+.date-quick-btn:hover{border-color:var(--electric);color:var(--electric)}
+
 /* BUDGET ROWS */
 .budget-list{display:flex;flex-direction:column;gap:.75rem}
 .budget-row{
@@ -499,10 +517,12 @@ async function signOut() {
 }
 
 // ── TAB SWITCHING ─────────────────────────────────────────────────
-function switchTab(tab) {
+async function switchTab(tab) {
   state.activeTab = tab;
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab===tab));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id===`tab-${tab}`));
+  // Always pull fresh data from Supabase so charts and totals are up to date
+  await loadAll();
   renderTab(tab);
 }
 
@@ -532,6 +552,12 @@ function renderDashboard() {
   const spendable = hasBudget ? totalBudget - expenses : net;
   const budgetPct = hasBudget ? Math.min(100, Math.round((expenses/totalBudget)*100)) : 0;
 
+  // All-time balance
+  const startBal = parseFloat(state.profile?.bank_balance||0);
+  const allIncome = txSum(state.transactions,'income');
+  const allExpenses = txSum(state.transactions,'expense');
+  const currentBalance = startBal + allIncome - allExpenses;
+
   const netClass = net>=0 ? 'positive' : 'negative';
   const spendClass = spendable<0 ? 'over' : (hasBudget && budgetPct>=80 ? 'warning' : '');
   const fillClass = budgetPct>=100 ? 'danger' : (budgetPct>=80 ? 'warning' : '');
@@ -552,6 +578,12 @@ function renderDashboard() {
 
   document.getElementById('tab-dashboard').innerHTML = `
     <div class="stats-row">
+      <div class="stat-card" style="position:relative;overflow:hidden">
+        <div style="position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,${currentBalance>=0?'var(--electric)':'var(--danger)'},transparent)"></div>
+        <div class="stat-label">Account balance</div>
+        <div class="stat-value ${currentBalance>=0?'positive':'negative'}">${fmt(currentBalance)}</div>
+        <div class="stat-sub" style="cursor:pointer;text-decoration:underline;text-underline-offset:3px" onclick="switchTab('transactions')">Starting: ${fmt(startBal)}</div>
+      </div>
       <div class="stat-card income-card">
         <div class="stat-label">Monthly income</div>
         <div class="stat-value income">${fmt(income)}</div>
@@ -561,11 +593,6 @@ function renderDashboard() {
         <div class="stat-label">Monthly expenses</div>
         <div class="stat-value expense">${fmt(expenses)}</div>
         <div class="stat-sub">${monthLabel(month)}</div>
-      </div>
-      <div class="stat-card net-${net>=0?'positive':'negative'}">
-        <div class="stat-label">Net balance</div>
-        <div class="stat-value ${netClass}">${net>=0?'+':''}${fmt(net)}</div>
-        <div class="stat-sub">Income minus expenses</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">Savings rate</div>
@@ -650,15 +677,28 @@ let txFilter = { type:'all', category:'all', period:null, search:'' };
 
 function renderTransactions() {
   if(!txFilter.period) txFilter.period = getCurrentMonth();
-  const expCats = state.categories.filter(c=>c.type==='expense'||c.type==='both');
-  const incCats = state.categories.filter(c=>c.type==='income'||c.type==='both');
   const allCats = state.categories;
+
+  const startBal = parseFloat(state.profile?.bank_balance||0);
+  const allIncome = txSum(state.transactions,'income');
+  const allExpenses = txSum(state.transactions,'expense');
+  const currentBalance = startBal + allIncome - allExpenses;
 
   document.getElementById('tab-transactions').innerHTML = `
     <div class="section-header">
       <h2>Transactions</h2>
       <button class="btn" onclick="openTxModal(null)">+ Add transaction</button>
     </div>
+
+    <div class="balance-banner">
+      <div>
+        <div class="balance-label">Current account balance</div>
+        <div class="balance-amount ${currentBalance<0?'negative':''}">${fmt(currentBalance)}</div>
+        <div class="balance-meta">Starting balance ${fmt(startBal)} + ${fmt(allIncome)} income − ${fmt(allExpenses)} expenses</div>
+      </div>
+      <button class="btn-ghost" onclick="openStartingBalanceModal()">Edit starting balance</button>
+    </div>
+
     <div class="filter-bar">
       <select id="f-type" onchange="applyTxFilter()">
         <option value="all">All types</option>
@@ -878,8 +918,8 @@ function renderAnalytics() {
 
     // Category donut for the selected period
     destroyChart('a-chart-donut');
-    const ctx2 = document.getElementById('a-chart-donut');
-    if(ctx2){
+    const donutEl = document.getElementById('a-chart-donut');
+    if(donutEl){
       const expTx = allTx.filter(t=>t.type==='expense');
       const catMap = {};
       expTx.forEach(t=>{
@@ -889,15 +929,48 @@ function renderAnalytics() {
       });
       const cats=Object.values(catMap).sort((a,b)=>b.total-a.total).slice(0,10);
       if(cats.length){
-        state.charts['a-chart-donut']=new Chart(ctx2,{type:'doughnut',data:{labels:cats.map(c=>c.name),datasets:[{data:cats.map(c=>c.total),backgroundColor:cats.map(c=>c.color+'bb'),borderColor:cats.map(c=>c.color),borderWidth:1}]},options:{responsive:true,plugins:{legend:{position:'right',labels:{color:'#a8b8d0',font:{family:"'DM Sans'"},boxWidth:12,padding:8}},tooltip:{callbacks:{label:ctx=>`${ctx.label}: ${fmt(ctx.raw)}`}}}}});
+        state.charts['a-chart-donut']=new Chart(donutEl,{
+          type:'doughnut',
+          data:{
+            labels:cats.map(c=>c.name),
+            datasets:[{data:cats.map(c=>c.total),backgroundColor:cats.map(c=>c.color+'bb'),borderColor:cats.map(c=>c.color),borderWidth:1}]
+          },
+          options:{
+            responsive:true,
+            plugins:{
+              legend:{position:'right',labels:{color:'#a8b8d0',font:{family:"'DM Sans'"},boxWidth:12,padding:8}},
+              tooltip:{callbacks:{label:item=>`${item.label}: ${fmt(item.raw)}`}}
+            }
+          }
+        });
+      } else {
+        donutEl.parentElement.innerHTML='<h3>Spending by category</h3><div class="empty" style="padding:1.5rem 0"><p>No expenses in this period</p></div>';
       }
     }
 
     // Daily line chart
     destroyChart('a-chart-line');
-    const ctx3 = document.getElementById('a-chart-line');
-    if(ctx3 && days.length){
-      state.charts['a-chart-line']=new Chart(ctx3,{type:'line',data:{labels:days.map(d=>fmtDate(d)),datasets:[{label:'Daily spending',data:days.map(d=>dayMap[d]),borderColor:'#ef4444',backgroundColor:'rgba(239,68,68,.1)',fill:true,tension:0.3,pointRadius:3,pointBackgroundColor:'#ef4444'}]},options:{responsive:true,plugins:{legend:{labels:{color:'#a8b8d0',font:{family:"'DM Sans'"}}}},scales:{x:{ticks:{color:'#6b7a93',maxTicksLimit:10},grid:{color:'rgba(255,255,255,.04)'}},y:{ticks:{color:'#6b7a93',callback:v=>fmt(v)},grid:{color:'rgba(255,255,255,.04)'}}}}});
+    const lineEl = document.getElementById('a-chart-line');
+    if(lineEl){
+      if(days.length){
+        state.charts['a-chart-line']=new Chart(lineEl,{
+          type:'line',
+          data:{
+            labels:days.map(d=>fmtDate(d)),
+            datasets:[{label:'Daily spending',data:days.map(d=>dayMap[d]),borderColor:'#ef4444',backgroundColor:'rgba(239,68,68,.1)',fill:true,tension:0.3,pointRadius:3,pointBackgroundColor:'#ef4444'}]
+          },
+          options:{
+            responsive:true,
+            plugins:{legend:{labels:{color:'#a8b8d0',font:{family:"'DM Sans'"}}}},
+            scales:{
+              x:{ticks:{color:'#6b7a93',maxTicksLimit:10},grid:{color:'rgba(255,255,255,.04)'}},
+              y:{ticks:{color:'#6b7a93',callback:v=>fmt(v)},grid:{color:'rgba(255,255,255,.04)'}}
+            }
+          }
+        });
+      } else {
+        lineEl.parentElement.innerHTML='<h3>Daily spending trend</h3><div class="empty" style="padding:1.5rem 0"><p>No spending data in this period</p></div>';
+      }
     }
   });
 }
@@ -1048,6 +1121,7 @@ function openTxModal(txId) {
   const expCats = state.categories.filter(c=>c.type==='expense'||c.type==='both');
   const incCats = state.categories.filter(c=>c.type==='income'||c.type==='both');
   const today = new Date().toISOString().slice(0,10);
+  const yesterday = new Date(Date.now()-86400000).toISOString().slice(0,10);
   const curType = tx?.type||'expense';
 
   const catOptions = (cats, selId) => cats.map(c=>`<option value="${c.id}" ${selId===c.id?'selected':''}>${esc(c.name)}</option>`).join('');
@@ -1076,6 +1150,10 @@ function openTxModal(txId) {
     <div class="form-group">
       <label>Date</label>
       <input type="date" id="m-date" value="${tx?.date||today}">
+      <div class="date-quick">
+        <button type="button" class="date-quick-btn" onclick="document.getElementById('m-date').value='${today}'">Today</button>
+        <button type="button" class="date-quick-btn" onclick="document.getElementById('m-date').value='${yesterday}'">Yesterday</button>
+      </div>
     </div>
     <div class="form-group">
       <label>Notes (optional)</label>
@@ -1197,6 +1275,9 @@ function openGoalModal(goalId) {
     <div class="form-group">
       <label>Target date (optional)</label>
       <input type="date" id="m-goal-date" value="${g?.target_date||''}">
+      <div class="date-quick">
+        <button type="button" class="date-quick-btn" onclick="document.getElementById('m-goal-date').value=''">Clear</button>
+      </div>
     </div>
     <div class="form-group">
       <label>Description (optional)</label>
@@ -1319,6 +1400,37 @@ async function saveCategory() {
   toast('Category added.','success');
 }
 
+// Starting balance modal
+function openStartingBalanceModal() {
+  const current = parseFloat(state.profile?.bank_balance||0);
+  openModal('Set starting balance',`
+    <p style="font-size:.85rem;color:var(--muted);margin-bottom:1rem">
+      Enter your bank balance <em>before</em> your first transaction in Ledger. Your current balance will be calculated from this plus all your recorded transactions.
+    </p>
+    <div class="form-group">
+      <label>Starting balance</label>
+      <input type="number" id="m-start-bal" step="0.01" placeholder="0.00" value="${current||''}">
+    </div>
+    <div style="display:flex;gap:.75rem;justify-content:flex-end">
+      <button class="btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn" onclick="saveStartingBalance()">Save</button>
+    </div>
+  `);
+  setTimeout(()=>document.getElementById('m-start-bal')?.focus(),50);
+}
+
+async function saveStartingBalance() {
+  const val = parseFloat(document.getElementById('m-start-bal').value);
+  if(isNaN(val)){ toast('Enter a valid amount.','error'); return; }
+  const { error } = await sb.from('profiles').update({ bank_balance:val, updated_at:new Date().toISOString() }).eq('id',state.user.id);
+  if(error){ toast('Failed to save.','error'); return; }
+  state.profile = { ...state.profile, bank_balance:val };
+  closeModal();
+  renderTransactions();
+  renderDashboard();
+  toast('Starting balance saved.','success');
+}
+
 // ── TOAST ─────────────────────────────────────────────────────────
 let toastTimer;
 function toast(msg, type='success') {
@@ -1331,7 +1443,17 @@ function toast(msg, type='success') {
 
 // ── KEYBOARD ──────────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
-  if(e.key==='Escape') closeModal();
+  if(e.key==='Escape') { closeModal(); return; }
+  if(e.key==='Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+    if(e.target.tagName==='TEXTAREA') return;
+    const overlay = document.getElementById('modal-overlay');
+    if(overlay.classList.contains('open')) {
+      // Click the last .btn in modal body (the primary save button)
+      const btns = document.querySelectorAll('#modal-body .btn');
+      const saveBtn = btns[btns.length-1];
+      if(saveBtn && !saveBtn.disabled) { e.preventDefault(); saveBtn.click(); }
+    }
+  }
 });
 
 init();
