@@ -423,7 +423,7 @@ try {
 
 const state = {
   user: null, profile: null,
-  categories: [], transactions: [], budgets: [], goals: [], recurring: [],
+  categories: [], transactions: [], budgets: [], goals: [], recurring: [], budgetTemplates: [],
   activeTab: 'dashboard',
   budgetMonth: null,
   analyticsPeriod: '3m',
@@ -441,6 +441,7 @@ async function init() {
     state.budgetMonth = getCurrentMonth();
     await loadAll();
     await processRecurring();
+    await processRecurringBudgets();
     document.getElementById('header-name').textContent = state.profile?.full_name || state.user.email;
     document.getElementById('loader').style.display = 'none';
     document.getElementById('site-header').style.display = '';
@@ -458,7 +459,7 @@ async function init() {
 
 async function loadAll() {
   const uid = state.user.id;
-  const [p, c, t, b, g, r] = await Promise.all([
+  const [p, c, t, b, g, r, rbt] = await Promise.all([
     sb.from('profiles').select('*').eq('id', uid).single(),
     sb.from('categories').select('*').order('type').order('name'),
     sb.from('transactions')
@@ -476,7 +477,11 @@ async function loadAll() {
     sb.from('recurring_transactions')
       .select('*, category:categories(id,name,color,type)')
       .eq('user_id', uid)
-      .order('next_date')
+      .order('next_date'),
+    sb.from('recurring_budget_templates')
+      .select('*, category:categories(id,name,color)')
+      .eq('user_id', uid)
+      .order('created_at')
   ]);
 
   if (p.error && p.error.code !== 'PGRST116') console.error('Profile load error:', p.error);
@@ -485,13 +490,15 @@ async function loadAll() {
   if (b.error) console.error('Budgets load error:', b.error);
   if (g.error) console.error('Goals load error:', g.error);
   if (r.error) console.error('Recurring load error:', r.error);
+  if (rbt.error) console.error('Budget templates load error:', rbt.error);
 
   if (p.data) state.profile = p.data;
-  state.categories   = c.data || [];
-  state.transactions = t.data || [];
-  state.budgets      = b.data || [];
-  state.goals        = g.data || [];
-  state.recurring    = r.data || [];
+  state.categories      = c.data || [];
+  state.transactions    = t.data || [];
+  state.budgets         = b.data || [];
+  state.goals           = g.data || [];
+  state.recurring       = r.data || [];
+  state.budgetTemplates = rbt.data || [];
 }
 
 // ── RECURRING: auto-create due transactions on load ───────────────
@@ -511,6 +518,22 @@ async function processRecurring() {
   }
   await loadAll();
   toast(`${due.length} recurring transaction${due.length > 1 ? 's' : ''} added automatically.`, 'success');
+}
+
+async function processRecurringBudgets() {
+  const month = getCurrentMonth();
+  const active = state.budgetTemplates.filter(t => t.active);
+  if (!active.length) return;
+  const existing = new Set(state.budgets.filter(b => b.period === month).map(b => b.category_id));
+  const missing = active.filter(t => !existing.has(t.category_id));
+  if (!missing.length) return;
+  for (const t of missing) {
+    await sb.from('budget_targets').insert({
+      user_id: state.user.id, category_id: t.category_id, period: month, amount: t.amount
+    });
+  }
+  await loadAll();
+  toast(`${missing.length} recurring budget${missing.length > 1 ? 's' : ''} applied for ${monthLabel(month)}.`, 'success');
 }
 
 function calcNextDate(dateStr, freq) {
@@ -896,6 +919,34 @@ function renderBudgets() {
         `).join('')}
       </div>
     </div>`:''}
+
+    <div style="margin-top:2rem;border-top:1px solid var(--border);padding-top:1.5rem">
+      <div class="section-header" style="margin-bottom:1rem">
+        <h3 style="font-family:'Bebas Neue',sans-serif;letter-spacing:.07em;font-size:1.2rem">Recurring budgets</h3>
+      </div>
+      ${state.budgetTemplates.length ? `
+        <div class="budget-list">
+          ${state.budgetTemplates.map(tmpl => {
+            const cat = state.categories.find(c => c.id === tmpl.category_id);
+            return `
+            <div class="budget-row" style="${!tmpl.active?'opacity:.5':''}">
+              <div class="budget-row-header">
+                <div class="budget-cat-name">
+                  <div class="budget-dot" style="background:${esc(cat?.color||'#6b7280')}"></div>
+                  ${esc(cat?.name||'Unknown')}
+                  ${!tmpl.active?'<span style="font-size:.72rem;color:var(--warning);margin-left:.4rem">Paused</span>':''}
+                </div>
+                <div style="display:flex;align-items:center;gap:.75rem">
+                  <span class="budget-amounts"><span class="spent">${fmt(tmpl.amount)}</span>/mo</span>
+                  <button class="icon-btn" title="${tmpl.active?'Pause':'Resume'}" onclick="toggleBudgetTemplate('${tmpl.id}',${tmpl.active})">${tmpl.active?'⏸':'▶'}</button>
+                  <button class="icon-btn del" title="Delete" onclick="deleteBudgetTemplate('${tmpl.id}')">✕</button>
+                </div>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+      ` : `<div class="empty" style="padding:1.25rem 0"><h3>No recurring budgets</h3><p>Check "Repeat every month" when saving a budget to make it recur.</p></div>`}
+    </div>
   `;
 }
 
@@ -1258,14 +1309,19 @@ async function deleteTx(id) {
 
 // Budget modal
 function openBudgetModal(catId, catName, period, currentAmt) {
-  openModal(`Budget for ${catName}`,`
-    <p style="font-size:.85rem;color:var(--muted);margin-bottom:1rem">${catName} · ${monthLabel(period)}</p>
+  const tmpl = state.budgetTemplates.find(t => t.category_id === catId);
+  openModal(`Budget for ${catName}`, `
+    <p style="font-size:.85rem;color:var(--muted);margin-bottom:1rem">${esc(catName)} · ${monthLabel(period)}</p>
     <div class="form-group">
       <label>Monthly budget amount</label>
       <input type="number" id="m-budget-amt" placeholder="0.00" step="0.01" min="0.01" value="${currentAmt||''}">
     </div>
-    <div style="display:flex;gap:.75rem;justify-content:flex-end">
-      ${currentAmt>0?`<button class="btn-danger" onclick="removeBudget('${catId}','${period}')">Remove budget</button>`:''}
+    <div style="display:flex;align-items:center;gap:.6rem;margin-bottom:1rem;cursor:pointer" onclick="document.getElementById('m-budget-recurring').click()">
+      <input type="checkbox" id="m-budget-recurring" ${tmpl?'checked':''} style="width:auto;cursor:pointer">
+      <label for="m-budget-recurring" style="margin:0;cursor:pointer;font-size:.88rem;color:var(--off)">Repeat every month automatically</label>
+    </div>
+    <div style="display:flex;gap:.75rem;justify-content:flex-end;flex-wrap:wrap">
+      ${currentAmt>0?`<button class="btn-danger" onclick="removeBudget('${catId}','${period}')">Remove</button>`:''}
       <button class="btn-ghost" onclick="closeModal()">Cancel</button>
       <button class="btn" onclick="saveBudget('${catId}','${period}')">Save</button>
     </div>
@@ -1273,27 +1329,56 @@ function openBudgetModal(catId, catName, period, currentAmt) {
 }
 
 async function saveBudget(catId, period) {
-  const amount = parseFloat(document.getElementById('m-budget-amt').value);
-  if(!amount||amount<=0){ toast('Enter a valid budget amount.','error'); return; }
+  const amount    = parseFloat(document.getElementById('m-budget-amt').value);
+  const recurring = document.getElementById('m-budget-recurring')?.checked;
+  if (!amount || amount <= 0) { toast('Enter a valid budget amount.', 'error'); return; }
 
   const { error } = await sb.from('budget_targets')
     .upsert({ user_id:state.user.id, category_id:catId, period, amount, updated_at:new Date().toISOString() }, { onConflict:'user_id,category_id,period' });
-  if(error){ toast('Failed to save budget.','error'); return; }
+  if (error) { toast('Failed to save budget.', 'error'); return; }
+
+  // Sync recurring template
+  const tmpl = state.budgetTemplates.find(t => t.category_id === catId);
+  if (recurring) {
+    await sb.from('recurring_budget_templates')
+      .upsert({ user_id:state.user.id, category_id:catId, amount, active:true, updated_at:new Date().toISOString() }, { onConflict:'user_id,category_id' });
+  } else if (tmpl) {
+    await sb.from('recurring_budget_templates').delete().eq('id', tmpl.id);
+  }
 
   closeModal();
   await loadAll();
   renderBudgets();
-  toast('Budget saved.','success');
+  toast('Budget saved.', 'success');
 }
 
 async function removeBudget(catId, period) {
-  if(!confirm('Remove this budget?')) return;
+  if (!confirm('Remove this budget?')) return;
   const { error } = await sb.from('budget_targets').delete().eq('user_id',state.user.id).eq('category_id',catId).eq('period',period);
-  if(error){ toast('Failed to remove.','error'); return; }
+  if (error) { toast('Failed to remove.', 'error'); return; }
   closeModal();
   await loadAll();
   renderBudgets();
-  toast('Budget removed.','success');
+  toast('Budget removed.', 'success');
+}
+
+async function toggleBudgetTemplate(id, currentlyActive) {
+  const { error } = await sb.from('recurring_budget_templates')
+    .update({ active: !currentlyActive, updated_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) { toast('Failed to update.', 'error'); return; }
+  await loadAll();
+  renderBudgets();
+  toast(currentlyActive ? 'Recurring budget paused.' : 'Recurring budget resumed.', 'success');
+}
+
+async function deleteBudgetTemplate(id) {
+  if (!confirm('Delete this recurring budget? Existing monthly budgets are not affected.')) return;
+  const { error } = await sb.from('recurring_budget_templates').delete().eq('id', id);
+  if (error) { toast('Failed to delete.', 'error'); return; }
+  await loadAll();
+  renderBudgets();
+  toast('Recurring budget deleted.', 'success');
 }
 
 // Goal modal
