@@ -5,12 +5,13 @@
 
 ### profiles
 ```sql
-id          uuid        PK → references auth.users ON DELETE CASCADE
-email       text        not null
-full_name   text
-currency    text        not null default 'USD'
-created_at  timestamptz not null default now()
-updated_at  timestamptz not null default now()
+id            uuid        PK → references auth.users ON DELETE CASCADE
+email         text        not null
+full_name     text
+currency      text        not null default 'USD'
+bank_balance  numeric(12,2) not null default 0   -- user's starting balance before first transaction
+created_at    timestamptz not null default now()
+updated_at    timestamptz not null default now()
 ```
 Auto-created by `handle_new_user` trigger on `auth.users` insert.
 
@@ -66,6 +67,23 @@ created_at     timestamptz not null default now()
 updated_at     timestamptz not null default now()
 ```
 
+### recurring_transactions
+```sql
+id           uuid        PK default gen_random_uuid()
+user_id      uuid        not null → profiles(id) ON DELETE CASCADE
+type         text        not null  -- 'income' | 'expense'
+amount       numeric(12,2) not null
+category_id  uuid        → categories(id) ON DELETE SET NULL
+description  text        not null
+notes        text
+frequency    text        not null  -- 'weekly' | 'monthly' | 'yearly'
+next_date    date        not null  -- date of next auto-creation
+active       boolean     not null default true
+created_at   timestamptz not null default now()
+updated_at   timestamptz not null default now()
+```
+Auto-processed on page load: any active template with `next_date <= today` creates a transaction and advances `next_date`.
+
 ---
 
 ## Row Level Security (all tables have RLS enabled)
@@ -77,6 +95,7 @@ updated_at     timestamptz not null default now()
 | transactions | own rows | own user_id | own rows | own rows |
 | budget_targets | own rows | own user_id | own rows | own rows |
 | savings_goals | own rows | own user_id | own rows | own rows |
+| recurring_transactions | own rows | own user_id | own rows | own rows |
 
 ---
 
@@ -87,6 +106,7 @@ updated_at     timestamptz not null default now()
 - `idx_budget_targets_user_period` on `budget_targets(user_id, period)`
 - `idx_savings_goals_user_id` on `savings_goals(user_id)`
 - `idx_categories_user_id` on `categories(user_id)`
+- `idx_recurring_user_active` on `recurring_transactions(user_id, active, next_date)`
 
 ---
 
@@ -98,18 +118,23 @@ updated_at     timestamptz not null default now()
 ## Migration rule
 **Append-only.** Never edit existing migration files. Always create a new file with the next timestamp.
 
+Migrations applied (in order):
+1. `20260424000001_initial_schema.sql` — base schema
+2. `20260424000002_delete_user_account_function.sql` — `delete_user_account()` RPC
+3. MCP: `add_bank_balance_to_profiles` — adds `bank_balance` column to profiles
+4. MCP: `add_recurring_transactions` — `recurring_transactions` table + RLS + index
+
 ---
 
 ## Auth flow
 1. User lands on `login.html`
 2. Signs up (email+password or Google OAuth) → Supabase sends verification email
-3. Email link → `confirm.html` → `verifyOtp` or `exchangeCodeForSession`
+3. Email link → `confirm.html` → uses `onAuthStateChange` for OAuth, `verifyOtp` for email
 4. On success → redirect to `account.html` after 3s countdown
 5. Every protected page → check session on load, redirect to `login.html` if none
 6. Sign out → `supabase.auth.signOut()` → redirect to `index.html`
 
-### Supabase auth configuration (dashboard settings)
-- **Site URL:** `https://your-domain.com` (update when domain is known)
-- **Redirect URLs:** `https://your-domain.com/**`
-- **Email template — Confirm signup link:**
-  `{{ .SiteURL }}/confirm.html?token_hash={{ .TokenHash }}&type=email`
+### Supabase auth configuration (already set ✅)
+- **Site URL:** `https://ianrose0072.github.io/ledger`
+- **Redirect URLs:** `https://ianrose0072.github.io/ledger/**`
+- **Google OAuth:** enabled
