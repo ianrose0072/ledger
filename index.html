@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ledger — Personal Budget Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --navy:    #050d1a;
+    --deep:    #0a1628;
+    --card:    #0f1e35;
+    --border:  rgba(16,185,129,0.15);
+    --electric:#10b981;
+    --accent:  #3b82f6;
+    --income:  #10b981;
+    --expense: #ef4444;
+    --white:   #f4f7ff;
+    --off:     #a8b8d0;
+    --muted:   #6b7a93;
+  }
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{background:var(--navy);color:var(--white);font-family:'DM Sans',sans-serif;font-weight:400;line-height:1.6;overflow-x:hidden}
+
+  /* grid background */
+  body::before{
+    content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
+    background-image:linear-gradient(rgba(16,185,129,0.04) 1px,transparent 1px),linear-gradient(90deg,rgba(16,185,129,0.04) 1px,transparent 1px);
+    background-size:60px 60px;
+  }
+
+  /* noise overlay */
+  body::after{
+    content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.04;
+    background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  }
+
+  nav{
+    position:sticky;top:0;z-index:100;
+    display:flex;align-items:center;justify-content:space-between;
+    padding:1rem 2rem;
+    background:rgba(5,13,26,.85);
+    backdrop-filter:blur(12px);
+    border-bottom:1px solid var(--border);
+  }
+  .nav-logo{font-family:'Bebas Neue',sans-serif;font-size:1.6rem;letter-spacing:.08em;color:var(--electric);text-decoration:none}
+  .nav-cta{
+    background:var(--electric);color:var(--navy);
+    font-family:'Bebas Neue',sans-serif;letter-spacing:.06em;font-size:.95rem;
+    padding:.5rem 1.4rem;border-radius:6px;text-decoration:none;transition:opacity .2s;
+  }
+  .nav-cta:hover{opacity:.85}
+
+  main{position:relative;z-index:1}
+
+  /* hero */
+  .hero{
+    max-width:780px;margin:0 auto;padding:7rem 2rem 5rem;text-align:center;
+  }
+  .hero-label{
+    display:inline-block;font-family:'Space Mono',monospace;font-size:.72rem;
+    letter-spacing:.12em;text-transform:uppercase;color:var(--electric);
+    border:1px solid var(--border);padding:.3rem .9rem;border-radius:20px;margin-bottom:1.5rem;
+  }
+  .hero h1{
+    font-family:'Bebas Neue',sans-serif;font-size:clamp(3rem,8vw,5.5rem);
+    letter-spacing:.06em;line-height:1.05;margin-bottom:1.5rem;
+  }
+  .hero h1 span{color:var(--electric)}
+  .hero p{font-size:1.15rem;color:var(--off);max-width:540px;margin:0 auto 2.5rem;font-weight:300}
+  .hero-actions{display:flex;gap:1rem;justify-content:center;flex-wrap:wrap}
+  .btn-primary{
+    background:var(--electric);color:var(--navy);
+    font-family:'Bebas Neue',sans-serif;letter-spacing:.07em;font-size:1.05rem;
+    padding:.75rem 2rem;border-radius:8px;text-decoration:none;transition:opacity .2s;display:inline-block;
+  }
+  .btn-primary:hover{opacity:.85}
+  .btn-ghost{
+    background:transparent;color:var(--white);border:1px solid rgba(255,255,255,.2);
+    font-family:'Bebas Neue',sans-serif;letter-spacing:.07em;font-size:1.05rem;
+    padding:.75rem 2rem;border-radius:8px;text-decoration:none;transition:border-color .2s,color .2s;display:inline-block;
+  }
+  .btn-ghost:hover{border-color:var(--electric);color:var(--electric)}
+
+  /* stats strip */
+  .stats-strip{
+    display:flex;justify-content:center;gap:3rem;flex-wrap:wrap;
+    padding:2rem;border-top:1px solid var(--border);border-bottom:1px solid var(--border);
+    margin:0 2rem;
+  }
+  .stat{text-align:center}
+  .stat-num{font-family:'Space Mono',monospace;font-size:1.5rem;color:var(--electric)}
+  .stat-label{font-size:.8rem;color:var(--muted);margin-top:.2rem}
+
+  /* sections */
+  section{max-width:1100px;margin:0 auto;padding:5rem 2rem}
+  .section-label{
+    font-family:'Space Mono',monospace;font-size:.72rem;letter-spacing:.12em;
+    text-transform:uppercase;color:var(--electric);margin-bottom:1rem;
+  }
+  .section-title{
+    font-family:'Bebas Neue',sans-serif;font-size:clamp(2rem,5vw,3rem);
+    letter-spacing:.06em;margin-bottom:1rem;
+  }
+  .section-sub{color:var(--off);font-weight:300;font-size:1.05rem;max-width:520px;margin-bottom:3rem}
+
+  /* feature grid */
+  .features-grid{
+    display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:1.5rem;
+  }
+  .feature-card{
+    background:var(--deep);border:1px solid var(--border);border-radius:12px;
+    padding:1.75rem;position:relative;overflow:hidden;transition:border-color .2s;
+  }
+  .feature-card::before{
+    content:'';position:absolute;top:0;left:0;right:0;height:2px;
+    background:linear-gradient(90deg,transparent,var(--electric),transparent);
+  }
+  .feature-card:hover{border-color:rgba(16,185,129,.4)}
+  .feature-icon{
+    width:44px;height:44px;border-radius:10px;
+    background:rgba(16,185,129,.1);border:1px solid var(--border);
+    display:flex;align-items:center;justify-content:center;margin-bottom:1rem;
+  }
+  .feature-icon svg{width:22px;height:22px;stroke:var(--electric);fill:none;stroke-width:1.8}
+  .feature-card h3{font-size:1rem;font-weight:600;margin-bottom:.5rem}
+  .feature-card p{font-size:.9rem;color:var(--off);font-weight:300;line-height:1.6}
+
+  /* how it works */
+  .steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:2rem;margin-top:1rem}
+  .step{display:flex;gap:1.25rem;align-items:flex-start}
+  .step-num{
+    flex-shrink:0;width:40px;height:40px;border-radius:50%;
+    background:rgba(16,185,129,.1);border:1px solid var(--border);
+    font-family:'Space Mono',monospace;font-size:.9rem;color:var(--electric);
+    display:flex;align-items:center;justify-content:center;
+  }
+  .step-content h4{font-weight:600;margin-bottom:.4rem}
+  .step-content p{font-size:.9rem;color:var(--off);font-weight:300}
+
+  /* what you get */
+  .breakdown{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem;margin-top:2rem}
+  .breakdown-item{
+    background:var(--deep);border:1px solid var(--border);border-radius:10px;padding:1.25rem;
+  }
+  .breakdown-item h4{font-size:.85rem;font-weight:600;margin-bottom:.5rem;color:var(--white)}
+  .breakdown-item p{font-size:.82rem;color:var(--off);font-weight:300}
+
+  /* cta section */
+  .cta-section{
+    text-align:center;padding:5rem 2rem;
+    border-top:1px solid var(--border);
+  }
+  .cta-section .section-title{margin-bottom:1rem}
+  .cta-section p{color:var(--off);font-weight:300;font-size:1rem;margin-bottom:2rem}
+
+  footer{
+    border-top:1px solid var(--border);padding:2rem;text-align:center;
+    font-size:.8rem;color:var(--muted);
+  }
+
+  @keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+  .hero,.feature-card,.step{animation:fadeUp .5s ease forwards}
+
+  @media(max-width:768px){
+    nav{padding:.75rem 1rem}
+    .hero{padding:4rem 1rem 3rem}
+    section{padding:3rem 1rem}
+    .stats-strip{gap:2rem;margin:0 1rem}
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <a href="index.html" class="nav-logo">Ledger</a>
+  <a href="login.html" class="nav-cta">Sign in</a>
+</nav>
+
+<main>
+  <section class="hero">
+    <div class="hero-label">Personal budget tracker</div>
+    <h1>Know exactly where your <span>money goes</span></h1>
+    <p>Log income and expenses, set monthly budgets by category, and see at a glance how much you have left to spend. No subscriptions, no ads, no guesswork.</p>
+    <div class="hero-actions">
+      <a href="login.html" class="btn-primary">Start tracking free</a>
+      <a href="#features" class="btn-ghost">See what's included</a>
+    </div>
+  </section>
+
+  <div class="stats-strip">
+    <div class="stat">
+      <div class="stat-num">5</div>
+      <div class="stat-label">Data views</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">18</div>
+      <div class="stat-label">Default categories</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">3</div>
+      <div class="stat-label">Chart types</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">100%</div>
+      <div class="stat-label">Your data, private</div>
+    </div>
+  </div>
+
+  <section id="features">
+    <div class="section-label">Features</div>
+    <div class="section-title">Everything you need to budget</div>
+    <p class="section-sub">Ledger covers the full picture — from logging a coffee purchase to tracking a six-month savings goal.</p>
+    <div class="features-grid">
+
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+        </div>
+        <h3>Income and expense tracking</h3>
+        <p>Log every transaction — income or expense — with a category, amount, date, and optional notes. Edit or delete anything at any time.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+        </div>
+        <h3>Monthly budgets by category</h3>
+        <p>Set a spending limit for each category every month. See progress bars showing how close you are to each limit and what you have left.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+        </div>
+        <h3>Remaining spendable amount</h3>
+        <p>Your dashboard shows exactly how much money you can still spend this month, calculated against your total budget and what you have already spent.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        </div>
+        <h3>Charts and spending trends</h3>
+        <p>Three chart views: income vs expenses month by month, spending broken down by category, and your daily spend trend for any period you choose.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        </div>
+        <h3>Daily, monthly, and yearly views</h3>
+        <p>Filter your data by any time period — current month, last three months, full year, or a custom range. Compare periods to spot patterns in your spending.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
+        </div>
+        <h3>Savings goals</h3>
+        <p>Create savings goals with a target amount and date. Track progress manually and see at a glance whether you are on track to hit each goal in time.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24"><path d="M20 7H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+        </div>
+        <h3>Custom categories</h3>
+        <p>Add your own spending and income categories on top of the 18 built-in defaults. Assign colors to make your charts easy to read at a glance.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        </div>
+        <h3>Private and secure</h3>
+        <p>Your financial data is stored in a private database with row-level security. No one else can read your transactions. You can delete your account at any time.</p>
+      </div>
+
+    </div>
+  </section>
+
+  <section id="how-it-works">
+    <div class="section-label">How it works</div>
+    <div class="section-title">Up and running in minutes</div>
+    <p class="section-sub">No setup wizard, no complicated onboarding. Just sign up and start logging.</p>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-content">
+          <h4>Create an account</h4>
+          <p>Sign up with your email or Google account. No credit card required — Ledger is free to use.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-content">
+          <h4>Log your income and expenses</h4>
+          <p>Add transactions as they happen or enter them in bulk. Choose a category, add a description, and set the date.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-content">
+          <h4>Set monthly budgets</h4>
+          <p>Tell Ledger how much you plan to spend in each category. It will track your progress and show what you have left.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-content">
+          <h4>See your financial picture</h4>
+          <p>Charts, daily totals, category breakdowns, and savings goal progress all update in real time as you add data.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-label">What you can see</div>
+    <div class="section-title">Every angle on your money</div>
+    <p class="section-sub">Ledger gives you multiple ways to understand where your money is going.</p>
+    <div class="breakdown">
+      <div class="breakdown-item">
+        <h4>This month at a glance</h4>
+        <p>Total income, total expenses, net balance, and savings rate for the current month on your dashboard.</p>
+      </div>
+      <div class="breakdown-item">
+        <h4>Spending by category</h4>
+        <p>See which categories are eating most of your budget with a donut chart and percentage breakdown.</p>
+      </div>
+      <div class="breakdown-item">
+        <h4>Month-over-month trends</h4>
+        <p>Bar chart comparing income and expenses across the last six months so you can spot patterns.</p>
+      </div>
+      <div class="breakdown-item">
+        <h4>Daily spend line</h4>
+        <p>How much did you spend each day this month? The daily line chart shows spikes and quiet periods clearly.</p>
+      </div>
+      <div class="breakdown-item">
+        <h4>Budget progress</h4>
+        <p>Progress bars for every category with a budget set, showing used vs remaining for the selected month.</p>
+      </div>
+      <div class="breakdown-item">
+        <h4>Savings goal progress</h4>
+        <p>Each savings goal shows its current amount vs target, percentage complete, and days until the target date.</p>
+      </div>
+    </div>
+  </section>
+
+  <div class="cta-section">
+    <div class="section-title">Start tracking your money today</div>
+    <p>Free to use. No credit card. Your data stays private.</p>
+    <a href="login.html" class="btn-primary">Create free account</a>
+  </div>
+</main>
+
+<footer>
+  &copy; 2026 Ledger. Your data is stored securely and never shared.
+</footer>
+
+</body>
+</html>

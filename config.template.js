@@ -1,0 +1,5 @@
+window.LDG = {
+  SUPABASE_URL: '%%SUPABASE_URL%%',
+  SUPABASE_KEY: '%%SUPABASE_KEY%%',
+  SITE_URL: '%%SITE_URL%%'
+};

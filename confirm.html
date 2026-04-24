@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Verifying — Ledger</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{--navy:#050d1a;--deep:#0a1628;--border:rgba(16,185,129,.15);--electric:#10b981;--white:#f4f7ff;--off:#a8b8d0;--muted:#6b7a93;--danger:#ef4444}
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--navy);color:var(--white);font-family:'DM Sans',sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1.5rem}
+  body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;background-image:linear-gradient(rgba(16,185,129,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(16,185,129,.04) 1px,transparent 1px);background-size:60px 60px}
+  .container{position:relative;z-index:1;max-width:400px;width:100%;text-align:center}
+  .logo{font-family:'Bebas Neue',sans-serif;font-size:1.8rem;letter-spacing:.08em;color:var(--electric);margin-bottom:2rem;display:block;text-decoration:none}
+  .card{background:var(--deep);border:1px solid var(--border);border-radius:14px;padding:2.5rem 2rem;position:relative;overflow:hidden}
+  .card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--electric),transparent)}
+  .icon{width:56px;height:56px;border-radius:50%;margin:0 auto 1.25rem;display:flex;align-items:center;justify-content:center}
+  .icon.loading{background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.3)}
+  .icon.success{background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.3)}
+  .icon.error{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3)}
+  .icon svg{width:26px;height:26px;stroke-width:2}
+  .icon.loading svg{stroke:#93c5fd;fill:none;animation:spin 1.2s linear infinite}
+  .icon.success svg{stroke:var(--electric);fill:none}
+  .icon.error svg{stroke:#fca5a5;fill:none}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  h2{font-family:'Bebas Neue',sans-serif;letter-spacing:.07em;font-size:1.6rem;margin-bottom:.75rem}
+  p{color:var(--off);font-size:.95rem;font-weight:300;line-height:1.6}
+  .countdown{font-family:'Space Mono',monospace;font-size:2.5rem;color:var(--electric);margin:1.5rem 0 .5rem}
+  .btn{display:inline-block;background:var(--electric);color:var(--navy);font-family:'Bebas Neue',sans-serif;letter-spacing:.07em;font-size:1rem;padding:.65rem 1.75rem;border-radius:8px;text-decoration:none;margin-top:1.5rem;border:none;cursor:pointer;transition:opacity .2s}
+  .btn:hover{opacity:.85}
+  .btn-ghost{display:inline-block;color:var(--off);font-size:.85rem;text-decoration:none;margin-top:1rem}
+  .btn-ghost:hover{color:var(--white)}
+</style>
+</head>
+<body>
+<div class="container">
+  <a href="index.html" class="logo">Ledger</a>
+  <div class="card" id="card">
+    <div class="icon loading" id="icon">
+      <svg viewBox="0 0 24 24"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+    </div>
+    <h2 id="title">Verifying your account</h2>
+    <p id="body">Please wait while we confirm your email address.</p>
+    <div id="countdownEl" style="display:none">
+      <div class="countdown" id="num">3</div>
+      <p>Redirecting to your dashboard...</p>
+    </div>
+    <div id="actions"></div>
+  </div>
+</div>
+
+<script>
+const supabase = window.supabase.createClient(window.LDG.SUPABASE_URL, window.LDG.SUPABASE_KEY);
+
+async function verify() {
+  const params = new URLSearchParams(window.location.hash.substring(1));
+  const qParams = new URLSearchParams(window.location.search);
+
+  const tokenHash = qParams.get('token_hash');
+  const type      = qParams.get('type') || 'email';
+  const code      = qParams.get('code') || params.get('code');
+  const accessToken  = params.get('access_token');
+  const refreshToken = params.get('refresh_token');
+
+  try {
+    if (tokenHash) {
+      const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type });
+      if (error) throw error;
+    } else if (code) {
+      const { error } = await supabase.auth.exchangeCodeForSession(code);
+      if (error) throw error;
+    } else if (accessToken) {
+      const { error } = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken });
+      if (error) throw error;
+    } else {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('No verification token found. Try signing in again.');
+    }
+    showSuccess();
+  } catch (err) {
+    showError(err.message || 'Verification failed.');
+  }
+}
+
+function showSuccess() {
+  document.getElementById('icon').className = 'icon success';
+  document.getElementById('icon').innerHTML = '<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>';
+  document.getElementById('title').textContent = 'Email verified';
+  document.getElementById('body').textContent = 'Your account is confirmed. Taking you to your dashboard.';
+  document.getElementById('countdownEl').style.display = 'block';
+  let count = 3;
+  const timer = setInterval(() => {
+    count--;
+    document.getElementById('num').textContent = count;
+    if (count <= 0) { clearInterval(timer); window.location.href = 'account.html'; }
+  }, 1000);
+}
+
+function showError(msg) {
+  document.getElementById('icon').className = 'icon error';
+  document.getElementById('icon').innerHTML = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
+  document.getElementById('title').textContent = 'Verification failed';
+  document.getElementById('body').textContent = msg;
+  document.getElementById('actions').innerHTML = '<a href="login.html" class="btn">Back to sign in</a>';
+}
+
+verify();
+</script>
+</body>
+</html>
